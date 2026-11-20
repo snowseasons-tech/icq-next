@@ -72,8 +72,10 @@ test("live messages are scoped to joined rooms and REST sends are broadcast", as
     client.on("message:new", (m: ChatMessage) => seen.push(m));
 
     await app.inject({ method: "POST", url: `/api/rooms/${roomA}/messages`, headers: auth, payload: { content: "stale A" } });
+    // Listen before sending: the socket can deliver before the HTTP response returns.
+    const freshB = waitForMessage(client, (m) => m.content === "fresh B");
     await app.inject({ method: "POST", url: `/api/rooms/${roomB}/messages`, headers: auth, payload: { content: "fresh B" } });
-    await waitForMessage(client, (m) => m.content === "fresh B");
+    await freshB;
 
     assert.deepEqual(seen.map((m) => m.content), ["fresh B"]);
   } finally {

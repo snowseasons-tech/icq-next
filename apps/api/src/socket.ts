@@ -12,6 +12,26 @@ type Ack = (response: { ok: boolean; error?: string }) => void;
 export const AUTHENTICATED_ROOM = "authenticated";
 export const userRoom = (userId: string) => `user:${userId}`;
 
+// Tells clients a message arrived, even when they have not joined that room (for unread counts).
+// Group activity goes to every authenticated socket; direct activity only to the two members.
+export async function announceMessage(
+    io: SocketServer,
+    prisma: PrismaClient,
+    message: { id: string; roomId: string; senderId: string; createdAt: Date },
+) {
+    const room = await prisma.room.findUnique({
+        where: { id: message.roomId },
+        select: { kind: true, members: { select: { userId: true } } },
+    });
+    if (!room) return;
+    const payload = { roomId: message.roomId, messageId: message.id, senderId: message.senderId, createdAt: message.createdAt };
+    if (room.kind === "GROUP") {
+        io.to(AUTHENTICATED_ROOM).emit("room:activity", payload);
+    } else {
+        for (const member of room.members) io.to(userRoom(member.userId)).emit("room:activity", payload);
+    }
+}
+
 export const configureSocket = (
     httpServer: HttpServer,
     prisma: PrismaClient,
@@ -74,6 +94,7 @@ export const configureSocket = (
                     include: { sender: { select: { id: true, username: true } } },
                 });
                 io.to(roomId).emit("message:new", message);
+                await announceMessage(io, prisma, message);
             } catch {
                 socket.emit("socket:error", { error: "Could not send message" });
             }

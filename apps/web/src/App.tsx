@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || window.location.origin;
@@ -12,6 +12,8 @@ type Room = {
   kind: "GROUP" | "DIRECT";
   // For direct rooms, the other person from the viewer's side.
   peer: UserRef | null;
+  // Messages from others the user has not opened yet.
+  unread: number;
   createdAt: string;
 };
 type ChatMessage = {
@@ -36,7 +38,10 @@ function roomLabel(room: Room) {
 
 const buttonStyle = (active: boolean) => ({
   width: "100%",
-  display: "block",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
   marginBottom: 8,
   padding: "10px 12px",
   border: active ? "1px solid #74dbff" : "1px solid #26344a",
@@ -74,9 +79,28 @@ export default function App() {
   const [dmQuery, setDmQuery] = useState("");
   const [dmResults, setDmResults] = useState<UserRef[]>([]);
   const [socket, setSocket] = useState<Socket | null>(null);
+  // Read by socket handlers, which are registered once per login and so would see stale state.
+  const activeRoomIdRef = useRef<string | null>(null);
+  const meIdRef = useRef<string | null>(null);
 
   const groupRooms = rooms.filter((room) => room.kind === "GROUP");
   const directRooms = rooms.filter((room) => room.kind === "DIRECT");
+
+  useEffect(() => { activeRoomIdRef.current = activeRoom?.id ?? null; }, [activeRoom]);
+  useEffect(() => { meIdRef.current = user?.sub ?? null; }, [user]);
+
+  // Tells the server this room has been seen and clears its badge here.
+  function markRead(roomId: string) {
+    setRooms((current) => current.map((room) => (room.id === roomId ? { ...room, unread: 0 } : room)));
+    if (!token) return;
+    fetch(`${API_URL}/api/rooms/${roomId}/read`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
+      .catch(() => undefined);
+  }
+
+  useEffect(() => {
+    if (activeRoom) markRead(activeRoom.id);
+    // Runs on a change of room or login only; markRead is recreated on every render.
+  }, [token, activeRoom]);
 
   useEffect(() => {
     if (!token) return;
@@ -145,6 +169,20 @@ export default function App() {
     client.on("socket:error", (payload: { error: string }) => setError(payload.error));
     // New group rooms are announced to everyone; direct rooms only to their members.
     client.on("room:new", (room: Room) => setRooms((current) => upsertRoom(current, room)));
+    // Activity in a room we have not joined: bump its badge. Activity in the open room is read at once.
+    client.on("room:activity", (event: { roomId: string; senderId: string }) => {
+      if (event.senderId === meIdRef.current) return;
+      if (event.roomId === activeRoomIdRef.current) {
+        fetch(`${API_URL}/api/rooms/${event.roomId}/read`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
+          .catch(() => undefined);
+        return;
+      }
+      setRooms((current) => current.map((room) => (room.id === event.roomId ? { ...room, unread: room.unread + 1 } : room)));
+    });
+    // Another tab of this user opened the room.
+    client.on("room:read", (event: { roomId: string }) => {
+      setRooms((current) => current.map((room) => (room.id === event.roomId ? { ...room, unread: 0 } : room)));
+    });
     return () => {
       client.disconnect();
       setSocket(null);
@@ -254,6 +292,19 @@ export default function App() {
     setMessages((current) => appendUnique(current, data.message));
   }
 
+  function renderRoom(room: Room) {
+    return (
+      <button key={room.id} type="button" onClick={() => setActiveRoom(room)} style={buttonStyle(activeRoom?.id === room.id)}>
+        <span>{roomLabel(room)}</span>
+        {room.unread > 0 && (
+          <span aria-label={`${room.unread} unread`} style={{ background: "#74dbff", color: "#061223", borderRadius: 999, padding: "1px 8px", fontSize: 12, fontWeight: 700 }}>
+            {room.unread > 99 ? "99+" : room.unread}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   if (user) {
     return (
       <main style={{ height: "100vh", display: "grid", gridTemplateColumns: "260px 1fr", background: "#08111f", color: "#edf4ff", fontFamily: "system-ui" }}>
@@ -264,11 +315,7 @@ export default function App() {
 
           <nav aria-label="Rooms" style={{ marginTop: 24 }}>
             <p style={{ color: "#74dbff", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", margin: "0 0 8px" }}>Rooms</p>
-            {groupRooms.map((room) => (
-              <button key={room.id} type="button" onClick={() => setActiveRoom(room)} style={buttonStyle(activeRoom?.id === room.id)}>
-                {roomLabel(room)}
-              </button>
-            ))}
+            {groupRooms.map(renderRoom)}
           </nav>
           <form onSubmit={createRoom} style={{ marginTop: 8 }}>
             <input aria-label="New room name" value={newRoomName} onChange={(event) => setNewRoomName(event.target.value)} placeholder="New room" style={inputStyle} />
@@ -276,11 +323,7 @@ export default function App() {
 
           <nav aria-label="Direct messages" style={{ marginTop: 24 }}>
             <p style={{ color: "#74dbff", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", margin: "0 0 8px" }}>Direct messages</p>
-            {directRooms.map((room) => (
-              <button key={room.id} type="button" onClick={() => setActiveRoom(room)} style={buttonStyle(activeRoom?.id === room.id)}>
-                {roomLabel(room)}
-              </button>
-            ))}
+            {directRooms.map(renderRoom)}
           </nav>
           <div style={{ marginTop: 8 }}>
             <input aria-label="Find someone" value={dmQuery} onChange={(event) => setDmQuery(event.target.value)} placeholder="Message someone…" style={inputStyle} />

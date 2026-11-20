@@ -9,6 +9,8 @@ export type RoomSummary = {
   createdAt: Date;
   // For direct rooms: the other person, from the viewer's point of view.
   peer: UserRef | null;
+  // Messages from other people the viewer has not opened yet. Only set on the room list.
+  unread: number;
 };
 
 type RoomWithMembers = {
@@ -32,7 +34,22 @@ export async function canAccessRoom(prisma: PrismaClient, roomId: string, userId
 
 export function summarizeRoom(room: RoomWithMembers, viewerId: string): RoomSummary {
   const peer = room.kind === "DIRECT" ? room.members.map((m) => m.user).find((u) => u.id !== viewerId) ?? null : null;
-  return { id: room.id, name: room.name, kind: room.kind, createdAt: room.createdAt, peer };
+  return { id: room.id, name: room.name, kind: room.kind, createdAt: room.createdAt, peer, unread: 0 };
+}
+
+// Counts messages from other users sent after the viewer's last read of each room.
+export async function unreadCounts(prisma: PrismaClient, userId: string, roomIds: string[]): Promise<Map<string, number>> {
+  const reads = await prisma.roomRead.findMany({
+    where: { userId, roomId: { in: roomIds } },
+    select: { roomId: true, lastReadAt: true },
+  });
+  const lastRead = new Map(reads.map((read) => [read.roomId, read.lastReadAt]));
+  const counts = await Promise.all(roomIds.map((roomId) =>
+    prisma.message.count({
+      where: { roomId, senderId: { not: userId }, createdAt: { gt: lastRead.get(roomId) ?? new Date(0) } },
+    }).then((count) => [roomId, count] as const),
+  ));
+  return new Map(counts);
 }
 
 export const roomSelect = {

@@ -16,6 +16,7 @@ model User {
 
   messages    Message[]
   memberships RoomMember[]
+  reads       RoomRead[]
 }
 
 enum RoomKind {
@@ -33,6 +34,19 @@ model Room {
 
   messages  Message[]
   members   RoomMember[]
+  reads     RoomRead[]
+}
+
+// When a user last opened a room. Messages from others after this time are unread.
+model RoomRead {
+  userId     String
+  roomId     String
+  lastReadAt DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roomId])
 }
 
 // Membership only gates DIRECT rooms; GROUP rooms are open to every signed-in user.

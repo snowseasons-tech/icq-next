@@ -6,8 +6,8 @@ import prismaPackage from "@prisma/client";
 import { z } from "zod";
 import type { PrismaClient as PrismaClientType } from "@prisma/client";
 import type { Server as SocketServer } from "socket.io";
-import { AUTHENTICATED_ROOM, configureSocket, userRoom } from "./socket.js";
-import { canAccessRoom, roomSelect, summarizeRoom } from "./rooms.js";
+import { AUTHENTICATED_ROOM, announceMessage, configureSocket, userRoom } from "./socket.js";
+import { canAccessRoom, roomSelect, summarizeRoom, unreadCounts } from "./rooms.js";
 
 type BuildOptions = { jwtSecret?: string; prisma?: PrismaClientType };
 const { PrismaClient } = prismaPackage as typeof import("@prisma/client");
@@ -82,7 +82,8 @@ export async function buildApp(options: BuildOptions = {}) {
       orderBy: { createdAt: "asc" },
       select: roomSelect,
     });
-    return { rooms: rooms.map((room) => summarizeRoom(room, sub)) };
+    const unread = await unreadCounts(prisma, sub, rooms.map((room) => room.id));
+    return { rooms: rooms.map((room) => ({ ...summarizeRoom(room, sub), unread: unread.get(room.id) ?? 0 })) };
   });
 
   app.post("/api/rooms", { onRequest: [authorize] }, async (request, reply) => {
@@ -164,7 +165,23 @@ export async function buildApp(options: BuildOptions = {}) {
     if (!(await canAccessRoom(prisma, roomId, payload.sub))) return reply.code(404).send({ error: "Room not found" });
     const message = await prisma.message.create({ data: { content: parsed.data.content, roomId, senderId: payload.sub }, include: { sender: { select: { id: true, username: true } } } });
     app.io.to(roomId).emit("message:new", message);
+    await announceMessage(app.io, prisma, message);
     return reply.code(201).send({ message });
+  });
+
+  // Marks a room read for the caller. Other tabs of the same user are told so their badges clear too.
+  app.post("/api/rooms/:roomId/read", { onRequest: [authorize] }, async (request: any, reply) => {
+    const { roomId } = request.params as { roomId: string };
+    const { sub } = request.user as JwtPayload;
+    if (!(await canAccessRoom(prisma, roomId, sub))) return reply.code(404).send({ error: "Room not found" });
+    const lastReadAt = new Date();
+    await prisma.roomRead.upsert({
+      where: { userId_roomId: { userId: sub, roomId } },
+      create: { userId: sub, roomId, lastReadAt },
+      update: { lastReadAt },
+    });
+    app.io.to(userRoom(sub)).emit("room:read", { roomId, lastReadAt });
+    return { roomId, lastReadAt };
   });
 
   app.addHook("onClose", async () => {
