@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String       @id @default(uuid())
+  username    String       @unique
+  email       String       @unique
+  password    String
+  createdAt   DateTime     @default(now())
+
+  messages    Message[]
+  memberships RoomMember[]
+}
+
+enum RoomKind {
+  GROUP
+  DIRECT
+}
+
+model Room {
+  id        String      @id @default(uuid())
+  name      String
+  kind      RoomKind    @default(GROUP)
+  // Sorted "userIdA:userIdB" for direct rooms, so each pair of users has exactly one DM.
+  dmKey     String?     @unique
+  createdAt DateTime    @default(now())
+
+  messages  Message[]
+  members   RoomMember[]
+}
+
+// Membership only gates DIRECT rooms; GROUP rooms are open to every signed-in user.
+model RoomMember {
+  roomId    String
+  userId    String
+  createdAt DateTime  @default(now())
+
+  room      Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@id([roomId, userId])
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  content   String
+  senderId  String
+    sender    User        @relation(fields: [senderId], references: [id])
+  roomId    String
+    room      Room        @relation(fields: [roomId], references: [id])
+    createdAt DateTime    @default(now())
+}

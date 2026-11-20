@@ -1,0 +1,30 @@
+{
+    "name": "@icq/api",
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/server.ts",
+        "build": "tsc -p tsconfig.json",
+        "test": "node --test --import tsx tests/*.test.ts",
+        "prisma:generate": "prisma generate",
+        "prisma:migrate:dev": "prisma migrate dev",
+        "prisma:migrate": "prisma migrate deploy",
+        "prisma:seed": "tsx prisma/seed.ts",
+        "start": "node dist/server.js"
+    },
+    "dependencies": {
+        "@fastify/cors": "10.0.0",
+        "@fastify/jwt": "^9.0.0",
+        "@prisma/client": "6.0.0",
+        "bcrypt": "^6.0.0",
+        "fastify": "^5.0.0",
+        "socket.io": "^4.8.0",
+        "zod": "^3.24.0"
+    },
+    "devDependencies": {
+        "@types/bcrypt": "^6.0.0",
+        "prisma": "6.0.0",
+        "socket.io-client": "^4.8.0",
+        "tsx": "^4.0.0",
+        "typescript": "^5.7.0"
+    }
+}

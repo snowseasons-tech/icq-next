@@ -1,0 +1,17 @@
+node_modules
+dist
+build
+coverage
+
+.env
+.env.*
+
+.vscode
+
+pnpm-lock.yaml
+
+apps/api/prisma/dev.db
+
+uploads
+
+.DS_Store
